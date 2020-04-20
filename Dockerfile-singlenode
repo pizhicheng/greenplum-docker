@@ -1,0 +1,79 @@
+From ubuntu:18.04
+
+MAINTAINER pi.zhicheng <pizhicheng@foxmail.com>
+
+ARG GP_VERSION=6.0.1
+ARG username=gpadmin
+ARG userpassword=gpadmin
+ARG MASTER_DIRECTORY=/data/greenplum/gpmaster
+ARG DATA_DIRECTORY=/data/greenplum/gpdata
+ARG MIRROR_DIRECTORY=/data/greenplum/gpmirror
+ARG PGPORT=5432
+
+# Install basic utils
+RUN apt-get --assume-yes update \
+  && apt-get upgrade -y \
+  && apt-get install -y sudo wget software-properties-common vim less postgresql \
+       openssh-server python locales netcat expect iputils-ping sshpass 
+
+# Install Greenplum dependency. http://docs.greenplum.org/6-0/install_guide/platform-requirements.html
+RUN apt-get install -f -y libapr1 libaprutil1 bash bzip2 krb5-multidev libcurl3-gnutls \
+      libcurl4 libevent-2.1-6 libxml2 libyaml-0-2 zlib1g libldap-2.4-2 openssh-server openssh-client \
+      openssl perl libreadline-dev rsync sed tar zip net-tools less iproute2
+
+# Install greenplum
+COPY greenplum_${GP_VERSION}.deb /deb/greenplium.deb
+RUN dpkg -iEGB /deb/*.deb
+
+# Set locale
+RUN localedef -i en_US -c -f UTF-8 -A /usr/share/locale/locale.alias en_US.UTF-8
+
+# Configure system
+RUN echo "RemoveIPC=no" >> /etc/systemd/logind.conf \
+  && echo "MaxStartups 200" >> /etc/ssh/sshd_config \
+  && /etc/init.d/ssh restart
+
+RUN groupadd ${username} \
+  && useradd ${username} -r -m -g ${username} -s /bin/bash \
+  && echo ${username}:${userpassword} | chpasswd \
+  && usermod -a -G sudo ${username}
+
+RUN echo ". /opt/greenplum-db-${GP_VERSION}/greenplum_path.sh" >> /home/${username}/.bashrc
+
+ENV DEBIAN_FRONTEND noninteractive
+ENV LC_ALL C.UTF-8
+ENV LANG C.UTF-8
+ENV LANG en_US.utf8
+ENV USER_NAME=${username}
+ENV USER_PASSWORD=${userpassword}
+
+ENV MASTER_DATA_DIRECTORY=${MASTER_DIRECTORY}/gpseg-1
+ENV MASTER_DIR=${MASTER_DIRECTORY}
+ENV DATA_DIR=${DATA_DIRECTORY}
+ENV MIRROR_DIR=${MIRROR_DIRECTORY}
+ENV PGPORT=5432
+ENV PGUSER=${USER_NAME}
+ENV PGDATABASE=postgres
+
+ENV INIT_DIR=/docker-init
+ENV LIB_DIR=/opt/greenplum-db-${GP_VERSION}/lib/postgresql/
+
+RUN mkdir -p ${MASTER_DIRECTORY} && chown -R ${USER_NAME} ${MASTER_DIRECTORY} \
+  && mkdir -p ${DATA_DIRECTORY} && chown -R ${USER_NAME} ${DATA_DIRECTORY} \
+  && mkdir -p ${MIRROR_DIRECTORY} && chown -R ${USER_NAME} ${MIRROR_DIRECTORY} \
+  && mkdir -p ${INIT_DIR} && chown -R ${USER_NAME} ${INIT_DIR} \
+  && echo "export MASTER_DATA_DIRECTORY=${MASTER_DATA_DIRECTORY}" >> /home/${USER_NAME}/.bashrc \
+  && echo "export PGPORT=${PGPORT}" >> /home/${USER_NAME}/.bashrc \
+  && echo "export PGUSER=${PGUSER}" >> /home/${USER_NAME}/.bashrc \
+  && echo "export PGDATABASE=${PGDATABASE}" >> /home/${USER_NAME}/.bashrc
+
+COPY limits.conf /etc/security/limits.conf
+COPY sysctl.conf /etc/sysctl.conf
+COPY ssh_auto.sh /home/${USER_NAME}/ssh_auto.sh
+COPY singlenode-entrypoint.sh /docker-entrypoint.sh
+
+EXPOSE 5432 22
+EXPOSE 6000-9000
+
+ENTRYPOINT ["/bin/bash", "/docker-entrypoint.sh"]
+
